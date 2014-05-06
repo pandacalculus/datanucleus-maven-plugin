@@ -15,15 +15,8 @@ limitations under the License.
 Contributors:
 2007 Andy Jefferson - migrated to DataNucleus, formatted, etc
     ...
-**********************************************************************/
+ **********************************************************************/
 package org.datanucleus.maven;
-
-import org.apache.maven.plugin.AbstractMojo;
-import org.apache.maven.plugin.MojoExecutionException;
-import org.codehaus.plexus.util.FileUtils;
-import org.codehaus.plexus.util.cli.CommandLineException;
-import org.codehaus.plexus.util.cli.CommandLineUtils;
-import org.codehaus.plexus.util.cli.Commandline;
 
 import java.io.File;
 import java.io.IOException;
@@ -31,15 +24,28 @@ import java.lang.reflect.Method;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.security.Permission;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+
+import org.apache.maven.artifact.Artifact;
+import org.apache.maven.plugin.AbstractMojo;
+import org.apache.maven.plugin.MojoExecutionException;
+import org.codehaus.plexus.util.FileUtils;
+import org.codehaus.plexus.util.cli.CommandLineException;
+import org.codehaus.plexus.util.cli.CommandLineUtils;
+import org.codehaus.plexus.util.cli.Commandline;
+import org.sonatype.plexus.build.incremental.BuildContext;
 
 /**
  * Convenience base class for DataNucleus Mojo extensions.
  */
 public abstract class AbstractDataNucleusMojo extends AbstractMojo
 {
+    /** @component */
+    protected BuildContext buildContext;
+
     /**
      * @parameter expression="${metadataDirectory}" default-value="${project.build.outputDirectory}"
      * @required
@@ -66,7 +72,7 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
      * @parameter expression="${plugin.artifacts}"
      * @required
      */
-    protected List pluginArtifacts;
+    protected List<Artifact> pluginArtifacts;
 
     /**
      * @parameter expression="${log4jConfiguration}"
@@ -107,8 +113,8 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
         if (!metadataDirectory.exists())
         {
             getLog().warn("No files to run DataNucleus tool '" + getToolName() + "'" +
-                " since specified metadata directory '" + metadataDirectory.getAbsolutePath() + "' is not available.");
-        	return;
+                    " since specified metadata directory '" + metadataDirectory.getAbsolutePath() + "' is not available.");
+            return;
         }
 
         List files = findMetadataFiles();
@@ -195,7 +201,7 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
         catch (IOException e)
         {
             throw new MojoExecutionException("Error while scanning for metadata files in '"
-                            + metadataDirectory.getAbsolutePath() + "'.", e);
+                    + metadataDirectory.getAbsolutePath() + "'.", e);
         }
 
         return files;
@@ -203,15 +209,14 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
 
     /**
      * <p>
-     * Return the set of classpath elements, ensuring that {@link #metadataDirectory}
-     * location is first, and that no entry is duplicated in the classpath.
+     * Return the set of classpath elements, ensuring that {@link #metadataDirectory} location is first, and that no entry is duplicated in
+     * the classpath.
      * </p>
      * <p>
      * The ability of the user to specify an alternate {@link #metadataDirectory} location
      * facilitates the need for this. <br>
      * Example: Users that want to DataNucleusEnhance their test classes.
      * </p>
-     * 
      * @return the list of unique classpath elements.
      */
     protected List getUniqueClasspathElements()
@@ -237,7 +242,7 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
      * @param files
      */
     protected abstract void executeDataNucleusTool(List pluginArtifacts, List files)
-    throws CommandLineException, MojoExecutionException;
+        throws CommandLineException, MojoExecutionException;
 
     /**
      * Returns the DataNucleus tool name being invoked by this plugin's execution.
@@ -252,7 +257,7 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
      * @throws MojoExecutionException Thrown if the command line executes but with error return code
      */
     protected void executeCommandLine(Commandline cl)
-    throws CommandLineException, MojoExecutionException
+        throws CommandLineException, MojoExecutionException
     {
         CommandLineUtils.StringStreamConsumer stdout = new CommandLineUtils.StringStreamConsumer();
         CommandLineUtils.StringStreamConsumer stderr = new CommandLineUtils.StringStreamConsumer();
@@ -283,15 +288,22 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
     }
 
     protected void executeInJvm(String className, List args, List cpEntries, boolean quiet)
-    throws MojoExecutionException
+        throws MojoExecutionException
     {
+        // Prevent it from exiting when calling main() on enhancer because when running inside Eclipse for instance this will close it
+        SecurityManager smOrginal = System.getSecurityManager();
+        if (isEclipseBuild())
+        {
+            System.setSecurityManager(new NoExitSecurityManager(System.getSecurityManager()));
+        }
+
         try
         {
             URL[] urls = new URL[cpEntries.size()];
-            int urlIdx=0;
-            for (Iterator it = cpEntries.iterator(); it.hasNext(); )
+            int urlIdx = 0;
+            for (Iterator it = cpEntries.iterator(); it.hasNext();)
             {
-                String n  = (String) it.next();
+                String n = (String) it.next();
                 try
                 {
                     if (!quiet && verbose)
@@ -302,13 +314,13 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
                 }
                 catch (Exception e)
                 {
-                    throw new MojoExecutionException("Cannot convert to url: " + n, e );
+                    throw new MojoExecutionException("Cannot convert to url: " + n, e);
                 }
             }
 
             URLClassLoader loader = new URLClassLoader(urls, null);
             Class c = loader.loadClass(className);
-            Method m = c.getMethod("main", new Class[] { String[].class });
+            Method m = c.getMethod("main", new Class[]{String[].class});
             ClassLoader tl = Thread.currentThread().getContextClassLoader();
             String oldProp = System.getProperty("log4j.configuration");
             try
@@ -329,7 +341,7 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
                     }
                 }
 
-                m.invoke(null, new Object[] {(String[])args.toArray(new String[args.size()])});
+                m.invoke(null, new Object[]{(String[]) args.toArray(new String[args.size()])});
             }
             finally
             {
@@ -347,6 +359,41 @@ public abstract class AbstractDataNucleusMojo extends AbstractMojo
         catch (Exception e)
         {
             throw new MojoExecutionException("Error executing DataNucleus tool " + getToolName(), e);
+        }
+        finally
+        {
+            // Restore original security manager
+            System.setSecurityManager(smOrginal);
+        }
+    }
+
+    protected boolean isEclipseBuild()
+    {
+        return buildContext.getClass().getName().equals("EclipseBuildContext");
+    }
+
+    private static class NoExitSecurityManager extends SecurityManager
+    {
+        SecurityManager original;
+
+        NoExitSecurityManager(SecurityManager original)
+        {
+            this.original = original;
+        }
+
+        @Override
+        public void checkExit(int status)
+        {
+            throw (new SecurityException("Error caught during Enhancement"));
+        }
+
+        @Override
+        public void checkPermission(Permission perm)
+        {
+            if (original != null)
+            {
+                original.checkPermission(perm);
+            }
         }
     }
 }
